@@ -1,0 +1,18 @@
+--- #YAML:1.0
+name:                Arepa
+version:             0.74
+abstract:            Apt REPository Assistant
+license:             ~
+author:              
+    - Esteban Manchado Velázquez <estebanm@opera.com>
+generated_by:        ExtUtils::MakeMaker version 6.42
+distribution_type:   module
+requires:     
+    Config::Tiny:                  0
+    DBD::SQLite:                   0
+    File::chmod:                   0
+    Parse::Debian::PackageDesc:    0
+    Test::Deep:                    0
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3

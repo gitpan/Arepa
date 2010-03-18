@@ -1,0 +1,32 @@
+---
+repository:
+  # Where the repo is. NOTE: Leave a trailing slash to rsync works correctly
+  path: /var/arepa/repository/
+  # Where the repo should be in the final machine (if it's different). Use
+  # Rsync format (user@machine:/var/www/virtual/aptrepo/html/debian/)
+  # remote_path: machine:/var/www/virtual/aptrepo/html/debian/
+  signature:
+    # Sign the repository with this ID. This is useful in case you might login
+    # with the wrong user and end up signing the repo with the wrong key
+    # id: 12345678
+# Where the upload queue is (some anonymous FTP upload directory, or
+# SSH-accesible queue or whatever)
+upload_queue:
+  path: /var/arepa/upload-queue
+# SQLite package database with compilation requests and other stuff
+package_db: /var/arepa/db/package.db
+web_ui:
+  # Base URL for CSS files and stuff
+  base_url: /arepa
+  # Base URL for CGIs (e.g. you should be able to access
+  # %cgi_base_url%/arepa.cgi)
+  cgi_base_url: /cgi-bin/arepa
+  # The templates under web/templates/
+  template_dir: /usr/share/arepa/templates
+  # This is the users/passwords allowed into the web UI. See example in
+  # users.yml-sample
+  user_file: /etc/arepa/users.yml
+  # The trusted public keys (for package signatures) should be here
+  gpg_homedir: /var/arepa/gnupg-web
+dir:
+  build_logs: /var/arepa/build-logs
