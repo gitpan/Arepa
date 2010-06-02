@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Arepa
-version:             0.74
+version:             0.75
 abstract:            Apt REPository Assistant
 license:             ~
 author:              
@@ -13,6 +13,8 @@ requires:
     File::chmod:                   0
     Parse::Debian::PackageDesc:    0
     Test::Deep:                    0
+    XML::RSS:                      0
+    YAML::Syck:                    0
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.3.html
     version: 1.3
