@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Arepa
-version:             0.75
+version:             0.76
 abstract:            Apt REPository Assistant
 license:             ~
 author:              

@@ -1,3 +1,13 @@
+0.76  Tue Jul 13 11:27:33 CEST 2010
+        - Make App::Repository tests depend on an environment variable
+          $REPREPRO4PATH (ie. be nice to CPANTS)
+        - Small fixes in the web UI (remove extra quote, set explicit charset,
+          show a message when the compilation queue is empty, improve the
+          build log page a bit)
+        - Allow creating builders of specific architectures (useful when you
+          are running amd64 and want a builder for i386)
+        - Fix RSS link (doh!)
+
 0.75  Wed Jun  2 13:42:56 CEST 2010
         - It turns out it wasn't completely fixed, oh well
         - Add missing dependency YAML::Syck to Makefile.PL

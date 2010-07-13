@@ -79,6 +79,7 @@ sub setup {
 sub show_view {
     my ($self, $template, $stash) = @_;
 
+    $self->header_props(-charset => 'UTF-8');
     $self->tt_process($template, { $self->base_stash,
                                    %$stash });
 }
@@ -280,7 +281,8 @@ sub build_log {
         };
         my $build_log_contents = join("", <F>);
         close F;
-        return "<pre>$build_log_contents</pre>";
+        return $self->show_view('build_log.tmpl',
+                                {log => $build_log_contents});
     }
 }
 
@@ -506,8 +508,8 @@ sub public_rss {
         $rss->add_item(
             title       => $pkg->name . " " . $pkg->version . " for " .
                             $pkg->distribution,
-            link        => $config->get_key('web_ui:base_url') .
-                            "/" . $pkg->name,
+            link        => $config->get_key('web_ui:cgi_base_url') .
+                            "/arepa.cgi",
             description => $pkg->name . " " . $pkg->version .
                             " was uploaded by " .
                             $self->_retarded_escape($pkg->maintainer) .
