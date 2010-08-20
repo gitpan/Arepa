@@ -5,29 +5,11 @@ use warnings;
 use English qw(-no_match_vars);
 use Carp;
 use Getopt::Long;
+use File::Temp;
+use File::Path;
 
 use Arepa::BuilderFarm;
 use Arepa::Repository;
-
-sub sign_distribution {
-    my ($config, $distro_name) = @_;
-
-    my $repo_path = $config->get_key('repository:path');
-    my $release_file_path = File::Spec->catfile($repo_path,
-                                                "dists",
-                                                $distro_name,
-                                                "Release");
-    unlink "$release_file_path.gpg";
-
-    my $extra_options = "";
-    if ($config->key_exists('repository:signature:id')) {
-        my $key_id = $config->get_key('repository:signature:id');
-        $extra_options = " -u $key_id";
-    }
-    my $gpg_cmd = "gpg --batch -abs $extra_options -o $release_file_path.gpg $release_file_path &>/dev/null";
-
-    return (system($gpg_cmd) == 0);
-}
 
 sub show_help {
     print STDERR <<EOD;
@@ -55,10 +37,14 @@ arepa showqueue --status compiling
 arepa showqueue --status compiled
 arepa showqueue --status pending
 
+arepa importgpgkey key.gpg
+
 arepa sign
 arepa sign --sync
 
 arepa sync
+
+arepa issynced
 EOD
     exit 1;
 }
@@ -97,7 +83,7 @@ if ($command eq 'build') {
             my ($builder) = $farm->get_matching_builders($req->{architecture},
                                                          $req->{distribution});
             if (!defined $builder) {
-                print STDERR "Goddamnit! There aren't any builders for $req->{distribution}/$req->{architecture}\n";
+                print STDERR "There aren't any builders for $req->{distribution}/$req->{architecture}???\n";
                 exit 1;
             }
             my $source_pkg_id = $req->{source_package_id};
@@ -107,20 +93,24 @@ if ($command eq 'build') {
             print "(arch: $req->{architecture}, ";
             print "distro: $req->{distribution}) ";
             print "with builder $builder...\n";
-            if ($farm->compile_package_from_queue($builder, $req->{id})) {
+            my $temp_dir = File::Temp::tempdir();
+            if ($farm->compile_package_from_queue($builder,
+                                                  $req->{id},
+                                                  output_dir => $temp_dir)) {
                 print "*** SUCCESS ***\n";
-                foreach my $deb_package (glob('*.deb')) {
+                foreach my $deb_package (glob("$temp_dir/*.deb")) {
                     print "Adding $deb_package to the repository\n";
                     if ($repository->insert_binary_package($deb_package,
                                                            $req->{distribution})) {
                         unlink $deb_package;
-                        sign_distribution($config, $req->{distribution});
                     }
                 }
+                $repository->sign_distribution($req->{distribution});
             }
             else {
                 print "*** FAILED ***\n";
             }
+            rmtree($temp_dir);
         }
     }
     elsif (defined $recompile) {
@@ -140,21 +130,25 @@ if ($command eq 'build') {
         print "(arch: $req{architecture}, ";
         print "distro: $req{distribution}) ";
         print "with builder $builder...\n";
-        if ($farm->compile_package_from_queue($builder, $req{id})) {
+        my $temp_dir = File::Temp::tempdir();
+        if ($farm->compile_package_from_queue($builder,
+                                              $req{id},
+                                              output_dir => $temp_dir)) {
             print " done.\n";
             foreach my $deb_package (glob('*.deb')) {
                 print "Adding $deb_package to the repository\n";
                 if ($repository->insert_binary_package($deb_package,
                                                        $req{distribution})) {
                     unlink $deb_package;
-                    sign_distribution($config, $req{distribution});
                 }
             }
+            $repository->sign_distribution($req{distribution});
         }
         else {
             print " failed.\n";
             print "Log:\n", $farm->last_build_log, "\n";
         }
+        rmtree($temp_dir);
     }
     else {
         my ($dsc_file, $builder) = @ARGV;
@@ -235,6 +229,12 @@ elsif ($command eq 'showqueue') {
         print "$elt->{architecture} $elt->{distribution}\n";
     }
 }
+elsif ($command eq 'importgpgkey') {
+    my ($gpg_key_path) = @ARGV;
+    my $gpg_homedir = $config->get_key('web_ui:gpg_homedir');
+    system("gpg --homedir '$gpg_homedir' --no-default-keyring " .
+                "--import '$gpg_key_path'");
+}
 elsif ($command eq 'sign') {
     my $sync = 0;
     $r = GetOptions('sync' => \$sync);
@@ -243,14 +243,12 @@ elsif ($command eq 'sign') {
         show_help;
     }
 
-    my $repo_path = $config->get_key('repository:path');
-
     # Sign all the Release files
     my $repository = Arepa::Repository->new($config_file);
     foreach my $distribution ($repository->get_distributions) {
         my $distro_name = $distribution->{codename};
         print "Signing $distro_name...\n";
-        if (! sign_distribution($config, $distro_name)) {
+        if (! $repository->sign_distribution($distro_name)) {
             print STDERR "ERROR: couldn't sign Release file for '$distro_name'\n";
             exit 1;
         }
@@ -258,22 +256,20 @@ elsif ($command eq 'sign') {
 
     # If --sync was passed, sync too
     if ($sync) {
-        my $remote_repo_path = $config->get_key('repository:remote_path');
-        my $rsync_cmd = "rsync -avz --delete $repo_path $remote_repo_path";
-        if (system($rsync_cmd) != 0) {
+        if (! $repository->sync_remote) {
             print STDERR "ERROR: rsync command failed\n";
-            print STDERR "Command was '$rsync_cmd'\n";
         }
     }
 }
 elsif ($command eq 'sync') {
-    my $local_repo  = $config->get_key('repository:path');
-    my $remote_repo = $config->get_key('repository:remote_path');
-    my $rsync_cmd = "rsync -avz --delete $local_repo $remote_repo";
-    if (system($rsync_cmd) != 0) {
+    my $repository = Arepa::Repository->new($config_file);
+    if (! $repository->sync_remote) {
         print STDERR "ERROR: rsync command failed\n";
-        print STDERR "Command was '$rsync_cmd'\n";
     }
+}
+elsif ($command eq 'issynced') {
+    my $repository = Arepa::Repository->new($config_file);
+    exit ($repository->is_synced ? 0 : 1);
 }
 else {
     print STDERR "ERROR: Unknown command '$command'\n";

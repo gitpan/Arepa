@@ -41,14 +41,14 @@ sub get_distributions {
     my ($line, $repo_attrs, @repos);
     while ($line = <F>) {
         if ($line =~ /^\s*$/) {
-            push @repos, $repo_attrs if %$repo_attrs;
+            push @repos, $repo_attrs if (ref($repo_attrs) && %$repo_attrs);
             $repo_attrs = {};
         }
         elsif ($line =~ /^([^:]+):\s+(.+)/i) {
             $repo_attrs->{lc($1)} = $2;
         }
     }
-    push @repos, $repo_attrs if %$repo_attrs;
+    push @repos, $repo_attrs if (ref($repo_attrs) && %$repo_attrs);
     close F;
     return @repos;
 }
@@ -111,11 +111,10 @@ sub _shell_escape {
     my ($self, $arg) = @_;
     if (defined $arg) {
         $arg =~ s/'/\\'/go;
+        return "'$arg'";
     }
-    else {
-        $arg = "";
-    }
-    return "'$arg'";
+
+    return "";
 }
 
 sub last_cmd_output {
@@ -188,6 +187,116 @@ sub package_list {
     return %pkg_list;
 }
 
+sub _all_names_for_distro {
+    my ($self, %properties) = @_;
+
+    my @aliases = ($properties{codename});
+    if (defined $properties{suite}) {
+        push @aliases, $properties{suite};
+    }
+    return @aliases;
+}
+
+sub add_distribution {
+    my ($self, %properties) = @_;
+
+    my $repository_path = $self->get_config_key('repository:path');
+    my $distributions_config_file = "$repository_path/conf/distributions";
+
+
+    if (! defined $properties{codename}) {
+        return 0;
+    }
+    # Duplicate names of any kind
+    my @new_distro_names = $self->_all_names_for_distro(%properties);
+    my @existing_distro_names = map { $self->_all_names_for_distro(%$_) }
+                                    $self->get_distributions;
+    foreach my $distro_name (@new_distro_names) {
+        if (grep { $_ eq $distro_name } @existing_distro_names) {
+            return 0;
+        }
+    }
+
+    # Everything seems alright, serialise the distribution properties
+    my $serialised_distro = join("\n",
+                                 map { ucfirst($_) . ": $properties{$_}"  }
+                                     keys %properties);
+
+    open F, ">>$distributions_config_file" or do {
+        print STDERR "Can't open $distributions_config_file for writing\n";
+        return 0;
+    };
+    print F <<EOD;
+
+$serialised_distro
+EOD
+    close F;
+
+    # Now, update the repository with the new distro
+    $self->_execute_reprepro('export', $properties{codename});
+}
+
+sub sign_distribution {
+    my ($self, $distro_name) = @_;
+
+    my $repo_path = $self->get_config_key('repository:path');
+    my $release_file_path = File::Spec->catfile($repo_path,
+                                                "dists",
+                                                $distro_name,
+                                                "Release");
+    unlink "$release_file_path.gpg";
+
+    my $extra_options = "";
+    if ($self->config_key_exists('repository:signature:id')) {
+        my $key_id = $self->get_config_key('repository:signature:id');
+        $extra_options = " -u $key_id";
+    }
+    my $gpg_cmd = "gpg --batch -abs $extra_options -o $release_file_path.gpg $release_file_path &>/dev/null";
+
+    return (system($gpg_cmd) == 0);
+}
+
+sub sync_remote {
+    my ($self) = @_;
+
+    my $repo_path = $self->get_config_key('repository:path');
+    if ($self->config_key_exists('repository:remote_path')) {
+        my $remote_repo_path = $self->get_config_key('repository:remote_path');
+        my $rsync_cmd = "rsync -avz --delete $repo_path $remote_repo_path";
+        if (system($rsync_cmd) == 0) {
+            return 1;
+        }
+        else {
+            print STDERR "Command was '$rsync_cmd'\n";
+            return 0;
+        }
+    }
+    return 0;
+}
+
+sub is_synced {
+    my ($self) = @_;
+
+    my $repo_path = $self->get_config_key('repository:path');
+    if ($self->config_key_exists('repository:remote_path')) {
+        my $remote_repo_path = $self->get_config_key('repository:remote_path');
+        my $rsync_cmd = "rsync -avz --delete --dry-run --out-format='AREPA_CHANGE %i' $repo_path $remote_repo_path";
+        my $changes = 0;
+
+        open RSYNCOUTPUT, "$rsync_cmd |";
+        while (<RSYNCOUTPUT>) {
+            next unless /^AREPA_CHANGE/;
+            if (/^AREPA_CHANGE [^.]/) {
+                $changes = 1;
+            }
+        }
+        close RSYNCOUTPUT;
+
+        return (! $changes);
+    }
+    return 0;
+}
+
 1;
 
 __END__
@@ -240,7 +349,8 @@ Gets the configuration key C<$key> from the Arepa configuration.
 =item get_distributions
 
 Returns an array of hashrefs. Each hashref represents a distribution declared
-in the repository C<conf/distributions> configuration file, and contains a key for every distribution attribute.
+in the repository C<conf/distributions> configuration file, and contains a
+(always lowercase) key for every distribution attribute.
 
 =item get_architectures
 
@@ -285,6 +395,30 @@ known distributions. The data structure is a hash that looks like this:
 That is, the keys are the package names, and the values are another hash. This
 hash has C<distribution/component> as keys, and hashes as values. These hashes
 have available versions as keys, and a list of architectures as values.
+
+=item add_distribution(%properties)
+
+Adds a new distribution to the repository, with whatever properties are
+specified. The properties are specified in lowercase (see
+C<get_distributions>) and C<codename> is mandatory. Also, you can't specify a
+codename of an existing distribution, or a suite name that an existing
+distribution already has. It returns 1 on success, or 0 on failure.
+
+=item sign_distribution($dist_name)
+
+Signs the C<Release> file for a single distribution (with codename
+C<$dist_name>). It returns if GPG returned error status zero.
+
+=item sync_remote
+
+Syncs the local repository to the remote location, if available in the config.
+Returns if the synchronisation worked (needs the C<rsync> command) or false if
+there wasn't any remote repository location in the config. 
+
+=item is_synced
+
+Returns if the local repository is synced with the remote repository. It
+returns false if there's no remote repository location in the config.
 
 =back
 

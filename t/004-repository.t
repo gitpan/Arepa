@@ -4,7 +4,7 @@ use warnings;
 use Test::More;
 
 if (exists $ENV{REPREPRO4PATH} and -x $ENV{REPREPRO4PATH}) {
-    plan tests => 23;
+    plan tests => 35;
 }
 else {
     plan skip_all => "Please specify the path to reprepro 4 in \$REPREPRO4PATH";
@@ -16,7 +16,8 @@ use IO::Zlib;
 
 use Arepa::Repository;
 
-use constant TEST_CONFIG_FILE => 't/config-test.yml';
+use constant TEST_CONFIG_FILE          => 't/config-test.yml';
+use constant TEST_REPO_ADD_CONFIG_FILE => 't/config-repo-test.yml';
 
 # Always start fresh
 my $test_repo_path = 't/repo-test';
@@ -188,3 +189,89 @@ my $id = $r->{package_db}->get_source_package_id('experimental-package',
 my %source_package_attrs = $r->{package_db}->get_source_package_by_id($id);
 is($source_package_attrs{distribution}, 'experimental',
    "When inserting a non-canonical distro package, the distro is correct");
+
+
+# Try to add new distributions -----------------------------------------------
+my $tmp_repo = 't/repo-add-test';
+mkpath "$tmp_repo/conf";
+open F, ">$tmp_repo/conf/distributions";
+print F <<EOD;
+Codename: initial
+Components: main
+Architectures: i386
+Suite: unstable
+AlsoAcceptFor: lenny
+
+Codename: another
+Components: main
+Architectures: i386
+Suite: ubuntu
+AlsoAcceptFor: lucid lucidlynx
+EOD
+close F;
+my @initial_distro_list = ({ codename      => 'initial',
+                             components    => 'main',
+                             architectures => 'i386',
+                             suite         => 'unstable',
+                             alsoacceptfor => 'lenny' },
+                           { codename      => 'another',
+                             components    => 'main',
+                             architectures => 'i386',
+                             suite         => 'ubuntu',
+                             alsoacceptfor => 'lucid lucidlynx' });
+
+my $r2 = Arepa::Repository->new(TEST_REPO_ADD_CONFIG_FILE);
+cmp_deeply([ $r2->get_distributions ], \@initial_distro_list,
+           "Distribution information should be correct");
+
+# Duplicate codename
+ok(! $r2->add_distribution(codename      => 'initial',
+                           components    => 'main',
+                           architectures => 'i386'),
+   "Shouldn't be able to add a duplicate codename");
+cmp_deeply([ $r2->get_distributions ], \@initial_distro_list,
+           "Distribution information should be correct");
+
+# Duplicate suite
+ok(! $r2->add_distribution(codename      => 'new',
+                           components    => 'main',
+                           architectures => 'i386',
+                           suite         => 'ubuntu'),
+   "Shouldn't be able to add a duplicate distribution alias");
+cmp_deeply([ $r2->get_distributions ], \@initial_distro_list,
+           "Distribution information should be correct");
+
+# "Cross duplicates" (a suite shouldn't be already there as codename)
+ok(! $r2->add_distribution(codename      => 'new',
+                           components    => 'main',
+                           architectures => 'i386',
+                           suite         => 'another'),
+   "Shouldn't be able to add a suite that existed as a codename");
+cmp_deeply([ $r2->get_distributions ], \@initial_distro_list,
+           "Distribution information should be correct");
+
+# "Cross duplicates" (codename as suite this time)
+ok(! $r2->add_distribution(codename      => 'ubuntu',
+                           components    => 'main',
+                           architectures => 'i386',
+                           suite         => 'newone'),
+   "Shouldn't be able to add a codename that existed as a suite");
+cmp_deeply([ $r2->get_distributions ], \@initial_distro_list,
+           "Distribution information should be correct");
+
+# Add a distribution (repeating AlsoAcceptFor is ok though)
+my %new_distro = (codename      => 'new',
+                  components    => 'main',
+                  architectures => 'i386',
+                  suite         => 'lucidlynx');
+ok($r2->add_distribution(%new_distro),
+   "Should be able to add a new distribution");
+cmp_deeply([ $r2->get_distributions ],
+           [ @initial_distro_list, \%new_distro ],
+           "Distribution information should be correct");
+
+# Check that after adding a distribution, the repository is updated
+ok(-d "$tmp_repo/dists/new",
+   "After adding distribution 'new', '$tmp_repo/dists/new' should exist");
+
+rmtree($tmp_repo);
