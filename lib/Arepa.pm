@@ -1,6 +1,6 @@
 package Arepa;
 
-our $VERSION = 0.81;
+our $VERSION = 0.85;
 our $AREPA_MASTER_USER = 'arepa-master';
 
 1;
@@ -241,6 +241,13 @@ This utility allows you to do certain "admin" operations that require root
 permissions, like creating new autobuilders. Must be run as root.
 
 =back
+
+=head1 INCOMPATIBILITIES
+
+B<At least> binNMUs (binary NMUs) don't work with sbuild 0.59 (the version
+shipped with Ubuntu Lucid Lynx).  Both 0.57 (Debian Lenny) and 0.60 (Debian
+Squeeze) should be fine, although you might get warnings in 0.60 due to the use
+of old-style configuration key names, needed for Debian Lenny compatibility.
 
 =head1 AUTHOR
 

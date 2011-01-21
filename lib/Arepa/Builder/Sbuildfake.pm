@@ -1,16 +1,35 @@
-package Arepa::UI::Text;
+package Arepa::Builder::Sbuildfake;
 
-sub print_title {
-    my ($self, $msg) = @_;
+use strict;
+use warnings;
 
-    my $len = length $msg;
-    print $msg, " ", "=" x (78 - 1 - $len), "\n";
-}
+use base qw(Arepa::Builder::Sbuild);
 
-sub print {
-    my ($self, $msg) = @_;
+use File::Spec;
+use File::Copy;
+use File::Basename;
 
-    print $msg;
+sub _call_sbuild {
+    my ($self, $package_spec, $params, $output_dir) = @_;
+
+    my $glob_pattern = File::Basename::basename($package_spec);
+    $glob_pattern =~ s/\.dsc//;
+
+    my @compilation_results =
+            glob(File::Spec->catfile($self->config('results_from'),
+                                     "$glob_pattern*.deb"));
+    $self->{last_build_log} = "Checking for results for $glob_pattern in " .
+                              $self->config('results_from') . ", found " .
+                              (scalar @compilation_results) . " results\n";
+    if (@compilation_results) {
+        foreach my $file (@compilation_results) {
+            copy($file, $output_dir);
+        }
+        return 0;
+    }
+    else {
+        return 1;
+    }
 }
 
 1;

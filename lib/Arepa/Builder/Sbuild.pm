@@ -19,12 +19,7 @@ use Arepa;
 
 use base qw(Arepa::Builder);
 
-our $last_build_log = undef;
 my $schroot_config = undef;
-
-sub last_build_log {
-    return $last_build_log;
-}
 
 sub _get_schroot_conf {
     my ($self) = @_;
@@ -84,7 +79,7 @@ sub do_init {
             $self->ensure_file_exists($full_path);
         }
         my $mount_cmd = qq(mount -oro,bind "/etc/$etc_file" "$full_path");
-        $self->ui_module->print_info("Binding /etc/$etc_file to $full_path");
+        $self->ui_module->print_title("Binding /etc/$etc_file to $full_path");
         system($mount_cmd);
     }
 }
@@ -98,7 +93,7 @@ sub do_uninit {
     my $ok = 1;
     foreach my $etc_file (qw(resolv.conf passwd shadow group gshadow)) {
         my $full_path = "$builder_dir/etc/$etc_file";
-        $self->ui_module->print_info("Unbinding $full_path from /etc/$etc_file");
+        $self->ui_module->print_title("Unbinding $full_path from /etc/$etc_file");
         my $r = system(qq(umount "$full_path" 2>/dev/null));
         if ($r != 0) {
             $ok = 0;
@@ -107,74 +102,83 @@ sub do_uninit {
     return $ok;
 }
 
+sub _call_sbuild {
+    my ($self, $package_spec, $params, $output_dir) = @_;
+
+    # 1) Create a temporary directory, change to it
+    my $tmp_dir = File::Temp::tempdir();
+    my $initial_dir = Cwd::cwd;
+    chdir $tmp_dir;
+
+    # 2) Execute sbuild there and save output in last_build_log
+    $self->{last_build_log} = qx/sbuild $params $package_spec/;
+    my $r = $CHILD_ERROR;
+
+    # 3) Move result to the result directory
+    chdir $initial_dir;
+    if ($output_dir !~ qr,^/,) {
+        $output_dir = File::Spec->catfile($initial_dir, $output_dir);
+    }
+    find({ wanted => sub {
+                if ($File::Find::name =~ /\.deb$/) {
+                    my $move_r = move($File::Find::name, $output_dir);
+                    if (!$move_r) {
+                        print STDERR "Couldn't move $File::Find::name to $output_dir.\nCan't write to $output_dir maybe?\n";
+                    }
+                }
+            },
+            follow => 0 },
+        $tmp_dir);
+
+    # 4) Remove temporary directory
+    rmtree($tmp_dir);
+
+    return $r;
+}
+
 sub _compile_package_from_spec {
-    my ($self, $builder_name, $package_spec, %user_opts) = @_;
+    my ($self, $package_spec, %user_opts) = @_;
     my %opts = (output_dir => '.', bin_nmu => 0, %user_opts);
 
-    if ($self->builder_exists($builder_name)) {
-        my $tmp_dir = File::Temp::tempdir();
-        my $initial_dir = Cwd::cwd;
-        chdir $tmp_dir;
-
-        my $extra_opts = "";
-        if ($opts{bin_nmu}) {
-            $extra_opts .= " --make-binNMU='Recompiled by Arepa' " .
-                            "--binNMU='$opts{bin_nmu}' " .
-                            "--uploader='Arepa <arepa-master\@localhost>'";
-        }
-
-        my $build_cmd = "sbuild --chroot $builder_name --apt-update --nolog -A $package_spec $extra_opts";
-        $last_build_log = qx/$build_cmd/;
-        my $r = $CHILD_ERROR;
-
-        # Move result to the result directory
-        chdir $initial_dir;
-        my $output_dir = $opts{output_dir};
-        # Relative path?
-        if ($output_dir !~ qr,^/,) {
-            $output_dir = File::Spec->catfile($initial_dir, $opts{output_dir});
-        }
-        find({ wanted => sub {
-                    if ($File::Find::name =~ /\.deb$/) {
-                        my $r = move($File::Find::name, $output_dir);
-                        if (!$r) {
-                            print STDERR "Couldn't move $File::Find::name to $output_dir.\nCan't write to $output_dir maybe?\n";
-                        }
-                    }
-               },
-               follow => 0 },
-             $tmp_dir);
-        # Remove temporary directory
-        rmtree($tmp_dir);
-
-        return ($r == 0);
+    my $extra_opts = "";
+    if ($opts{bin_nmu}) {
+        $extra_opts .= " --make-binNMU='Recompiled by Arepa' " .
+        "--binNMU='$opts{bin_nmu}' " .
+        "--maintainer='Arepa <arepa-master\@localhost>'";
     }
-    else {
-        croak "Don't know anything about builder '$builder_name'\n";
-    }
+
+    my $builder_name = $self->name;
+    my $build_params = "--chroot $builder_name --apt-update --nolog -A $extra_opts";
+    my $r = $self->_call_sbuild($package_spec,
+                                $build_params,
+                                $opts{output_dir});
+
+    return ($r == 0);
 }
 
 sub do_compile_package_from_dsc {
-    my ($self, $builder_name, $dsc_file, %user_opts) = @_;
+    my ($self, $dsc_file, %user_opts) = @_;
     my %opts = (output_dir => '.', %user_opts);
-    return $self->_compile_package_from_spec($builder_name,
-                                             $dsc_file,
+    return $self->_compile_package_from_spec($dsc_file,
                                              %opts);
 }
 
 sub do_compile_package_from_repository {
-    my ($self, $builder_name, $pkg_name, $pkg_version, %user_opts) = @_;
+    my ($self, $pkg_name, $pkg_version, %user_opts) = @_;
     my %opts = (output_dir => '.', %user_opts);
     my $package_spec = $pkg_name . '_' . $pkg_version;
 
-    return $self->_compile_package_from_spec($builder_name,
-                                             $package_spec,
+    return $self->_compile_package_from_spec($package_spec,
                                              %opts);
 }
 
 sub do_create {
     my ($self, $builder_dir, $mirror, $distribution, %opts) = @_;
 
+    # Strip trailing slash from the builder directory. If present, it
+    # triggers *very* weird errors when building any package with that
+    # builder (you'll see "cd: 1: can't cd to ..." in the log output)
+    $builder_dir =~ s,/$,,;
     my $builder_name = basename($builder_dir);
 
     my $chrootd_dir = "/etc/schroot/chroot.d";
@@ -193,11 +197,11 @@ root-groups=sbuild
 # groups=sbuild-security
 groups=sbuild
 #aliases=testing
-run-setup-scripts=false
-run-exec-scripts=false
+#run-setup-scripts=false
+#run-exec-scripts=false
 #personality=linux32
 EOCONTENT
-    $self->ui_module->print_info("Creating schroot file ($schroot_file)");
+    $self->ui_module->print_title("Creating schroot file ($schroot_file)");
     if (open F, ">$schroot_file") {
         print F $schroot_content;
         close F;
@@ -207,7 +211,7 @@ EOCONTENT
         exit 1;
     }
 
-    $self->ui_module->print_info("Creating base chroot");
+    $self->ui_module->print_title("Creating base chroot");
     my $extra_opts = "";
     if (defined $opts{arch}) {
         $extra_opts .= " --arch $opts{arch}";
@@ -223,7 +227,7 @@ EOCONTENT
     }
 
     # Create appropriate /etc/apt/sources.list
-    $self->ui_module->print_info("Creating default sources.list");
+    $self->ui_module->print_title("Creating default sources.list");
     open SOURCESLIST, ">$builder_dir/etc/apt/sources.list" or
         do {
             print STDERR "Couldn't write to /etc/apt/sources.list";
@@ -237,7 +241,7 @@ EOSOURCES
     close SOURCESLIST;
 
     # Making sure /etc/hosts includes localhost
-    $self->ui_module->print_info("Checking /etc/hosts");
+    $self->ui_module->print_title("Checking /etc/hosts");
     my $full_etc_hosts_path = "$builder_dir/etc/hosts";
     $self->ensure_file_exists($full_etc_hosts_path);
     if (open F, $full_etc_hosts_path) {
@@ -260,7 +264,7 @@ EOSOURCES
 
     # Make sure certain directories exist and are writable by the 'sbuild'
     # group
-    $self->ui_module->print_info("Creating build directories");
+    $self->ui_module->print_title("Creating build directories");
     my ($login, $pass, $uid, $gid) = getpwnam($Arepa::AREPA_MASTER_USER);
     if (!defined $login) {
         croak "'" . $Arepa::AREPA_MASTER_USER . "' user doesn't exist!";
@@ -278,14 +282,14 @@ EOSOURCES
         }
     }
 
-    $self->ui_module->print_info("Binding files");
+    $self->ui_module->print_title("Binding files");
     Arepa::Builder::Sbuild->init($builder_name);
 
-    $self->ui_module->print_info("Updating package list");
+    $self->ui_module->print_title("Updating package list");
     my $update_cmd = "chroot '$builder_dir' apt-get update";
     system($update_cmd);
 
-    $self->ui_module->print_info("Installing build-essential and fakeroot");
+    $self->ui_module->print_title("Installing build-essential and fakeroot");
     my $install_cmd = "chroot '$builder_dir' apt-get -y --force-yes install " .
                                                 "build-essential fakeroot";
     return system($install_cmd);

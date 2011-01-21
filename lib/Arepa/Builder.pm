@@ -24,6 +24,7 @@ sub ui_module {
         $ui_module = $module;
     }
     eval qq(use $ui_module;);
+    die $@ if $@;
     return $ui_module;
 }
 
@@ -35,6 +36,23 @@ sub type {
         croak "You should use a proper builder class, not ".ref($self);
     }
     return lc($class);
+}
+
+sub new {
+    my ($class, %attrs) = @_;
+
+    return bless {
+                    %attrs,
+                 },
+                 $class;
+}
+
+sub name { $_[0]->{name} }
+sub last_build_log { $_[0]->{last_build_log} }
+
+sub config {
+    my ($self, $key) = @_;
+    return $self->{$key};
 }
 
 
@@ -61,30 +79,25 @@ sub uninit {
 }
 
 sub do_compile_package_from_dsc {
-    my ($self, $builder_name, $dsc_file, %user_opts) = @_;
+    my ($self, $dsc_file, %user_opts) = @_;
     croak "Not implemented";
 }
 
 sub compile_package_from_dsc {
-    my ($self, $builder_name, $dsc_file, %user_opts) = @_;
-    $self->do_compile_package_from_dsc($builder_name, $dsc_file, %user_opts);
+    my ($self, $dsc_file, %user_opts) = @_;
+    $self->do_compile_package_from_dsc($dsc_file, %user_opts);
 }
 
 sub do_compile_package_from_repository {
-    my ($self, $builder_name, $pkg_name, $pkg_version, %user_opts) = @_;
+    my ($self, $pkg_name, $pkg_version, %user_opts) = @_;
     croak "Not implemented";
 }
 
 sub compile_package_from_repository {
-    my ($self, $builder_name, $pkg_name, $pkg_version, %user_opts) = @_;
-    $self->do_compile_package_from_repository($builder_name,
-                                              $pkg_name,
+    my ($self, $pkg_name, $pkg_version, %user_opts) = @_;
+    $self->do_compile_package_from_repository($pkg_name,
                                               $pkg_version,
                                               %user_opts);
-}
-
-sub last_build_log {
-    return;
 }
 
 sub do_create {
@@ -101,7 +114,7 @@ sub create {
 
     $self->do_create($builder_dir, $mirror, $distribution, %opts);
 
-    $self->ui_module->print_info("Configuration for config.yml");
+    $self->ui_module->print_title("Configuration for config.yml");
 
     my $type = $self->type;
 

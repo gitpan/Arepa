@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Carp qw(croak);
+use IO::Zlib;
 
 use Parse::Debian::PackageDesc;
 use Arepa::Config;
@@ -71,9 +72,11 @@ sub insert_source_package {
 
     use Parse::Debian::PackageDesc;
     my $parsed_dsc = Parse::Debian::PackageDesc->new($dsc_file);
+    my @archs = $parsed_dsc->architecture;
+    my $arch  = (scalar @archs > 1) ? 'any' : $archs[0];
     my %args = (name         => $parsed_dsc->name,
                 full_version => $parsed_dsc->version,
-                architecture => $parsed_dsc->architecture,
+                architecture => $arch,
                 distribution => $distro);
 
     if (exists $user_opts{comments}) {
@@ -132,13 +135,11 @@ sub _execute_reprepro {
     # Extra arguments
     my $extra = "";
     foreach my $arg (keys %extra_args) {
-        # Section and priority options are actually flipped in reprepro (that's
-        # a reprepro bug)
         if ($arg eq 'section') {
-            $extra .= " --priority " . $self->_shell_escape($extra_args{$arg});
+            $extra .= " --section " . $self->_shell_escape($extra_args{$arg});
         }
         elsif ($arg eq 'priority') {
-            $extra .= " --section " . $self->_shell_escape($extra_args{$arg})
+            $extra .= " --priority " . $self->_shell_escape($extra_args{$arg})
         }
         else {
             croak "Don't know anything about argument '$arg'";
@@ -167,7 +168,7 @@ sub _execute_reprepro {
     }
 }
 
-sub package_list {
+sub get_package_list {
     my ($self) = @_;
 
     my %pkg_list;
@@ -185,6 +186,66 @@ sub package_list {
         close PIPE;
     }
     return %pkg_list;
+}
+
+sub get_source_package_information {
+    my ($self, $package_name, $distro) = @_;
+
+    my $repo_path = $self->get_config_key('repository:path');
+    my $sources_file_path = File::Spec->catfile($repo_path,
+                                                'dists',
+                                                $distro,
+                                                'main',
+                                                'source',
+                                                'Sources.gz');
+
+    my $fh = new IO::Zlib;
+    my $current_pkg = "";
+    my %props;
+    if ($fh->open($sources_file_path, "rb")) {
+        while (<$fh>) {
+            if (/^Package: (.+)/) {
+                $current_pkg = $1;
+            }
+            elsif ($current_pkg eq $package_name) {
+                if (/^([^:]+): (.+)/) {
+                    $props{lc($1)} = $2;
+                }
+            }
+        }
+        $fh->close;
+    }
+
+    return %props;
+}
+
+sub get_binary_package_information {
+    my ($self, $package_name, $distro, $arch) = @_;
+
+    my $repo_path = $self->get_config_key('repository:path');
+    my $packages_file_path = File::Spec->catfile($repo_path,
+                                                 'dists',
+                                                 $distro,
+                                                 'main',
+                                                 'binary-' . $arch,
+                                                 'Packages');
+
+    my $current_pkg = "";
+    my %props;
+    open F, $packages_file_path;
+    while (<F>) {
+        if (/^Package: (.+)/) {
+            $current_pkg = $1;
+        }
+        elsif ($current_pkg eq $package_name) {
+            if (/^([^:]+): (.+)/) {
+                $props{lc($1)} = $2;
+            }
+        }
+    }
+    close F;
+
+    return %props;
 }
 
 sub _all_names_for_distro {
@@ -378,7 +439,7 @@ C<$distribution>.
 Returns the text output of the last executed command. This can help debugging
 problems.
 
-=item package_list
+=item get_package_list
 
 Returns a data structure representing all the available packages in all the
 known distributions. The data structure is a hash that looks like this:
@@ -395,6 +456,21 @@ known distributions. The data structure is a hash that looks like this:
 That is, the keys are the package names, and the values are another hash. This
 hash has C<distribution/component> as keys, and hashes as values. These hashes
 have available versions as keys, and a list of architectures as values.
+
+=item get_source_package_information($package_name, $distro)
+
+Returns a hash with the information for the source package with the given
+C<$package_name> inside distribution C<$distro>. If there is no source package
+by that name in that distribution, an empty hash will be returned.
+
+Note that keys in the hash are lowercase.
+
+=item get_binary_package_information($package_name, $distro, $arch)
+
+Returns a hash with the information for the binary package with the given
+C<$package_name> inside distribution C<$distro>/C<$arch>. If there is no binary
+package by that name in that distribution, for that architecture, an empty hash
+will be returned.
 
 =item add_distribution(%properties)
 

@@ -46,14 +46,21 @@ sub builder_type_module {
 }
 
 sub builder_module {
-    my ($self, $builder) = @_;
-    my %conf = $self->get_builder_config($builder);
+    my ($self, $builder_name) = @_;
+    my %conf = $self->get_builder_config($builder_name);
     my $module = $self->builder_type_module($conf{type});
     eval "use $module;";
     if ($@) {
         croak "Couldn't load builder module '$module' for type '$conf{type}': $@";
     }
     return $module;
+}
+
+sub builder {
+    my ($self, $builder_name) = @_;
+
+    my $module_name = $self->builder_module($builder_name);
+    return $module_name->new($self->get_builder_config($builder_name));
 }
 
 sub init_builders {
@@ -87,14 +94,12 @@ sub uninit_builder {
 }
 
 sub compile_package_from_dsc {
-    my ($self, $builder, $dsc_file, %user_opts) = @_;
+    my ($self, $builder_name, $dsc_file, %user_opts) = @_;
     my %opts = (output_dir => '.', %user_opts);
 
-    my $module = $self->builder_module($builder);
-    my $r = $module->compile_package_from_dsc($builder,
-                                              $dsc_file,
-                                              %opts);
-    $self->{last_build_log} = $module->last_build_log;
+    my $builder = $self->builder_module($builder_name);
+    my $r = $builder->compile_package_from_dsc($dsc_file, %opts);
+    $self->{last_build_log} = $builder->last_build_log;
     return $r;
 }
 
@@ -126,20 +131,20 @@ sub bin_nmu_id {
 }
 
 sub compile_package_from_queue {
-    my ($self, $builder, $request_id, %user_opts) = @_;
+    my ($self, $builder_name, $request_id, %user_opts) = @_;
     my %opts = (output_dir => '.', %user_opts);
 
     my %request = $self->package_db->get_compilation_request_by_id($request_id);
-    $self->package_db->mark_compilation_started($request_id, $builder);
+    $self->package_db->mark_compilation_started($request_id, $builder_name);
 
-    my $module = $self->builder_module($builder);
+    my $builder = $self->builder($builder_name);
     my %source_attrs = $self->package_db->get_source_package_by_id($request{source_package_id});
-    $opts{bin_nmu} = $self->bin_nmu_id(\%source_attrs, $builder);
-    my $r = $module->compile_package_from_repository($builder,
-                                                     $source_attrs{name},
-                                                     $source_attrs{full_version},
-                                                     %opts);
-    $self->{last_build_log} = $module->last_build_log;
+    $opts{bin_nmu} = $self->bin_nmu_id(\%source_attrs, $builder_name);
+    my $r =
+        $builder->compile_package_from_repository($source_attrs{name},
+                                                  $source_attrs{full_version},
+                                                  %opts);
+    $self->{last_build_log} = $builder->last_build_log;
 
     # Save the build log
     my $build_log_dir = $self->{config}->get_key('dir:build_logs');
@@ -231,6 +236,30 @@ sub register_source_package {
     return $source_id;
 }
 
+sub canonical_distribution {
+    my ($self, $arch, $distribution) = @_;
+
+    my @builders = $self->get_matching_builders($arch, $distribution);
+    my $distro;
+    foreach my $b (@builders) {
+        my %builder_cfg = $self->{config}->get_builder_config($b);
+        if (grep { $_ eq $distribution }
+                 @{$builder_cfg{distribution_aliases}},
+                 $builder_cfg{distribution}) {
+            # There should be only one; if there's more than one, that's a
+            # problem
+            if ($distro) {
+                croak "There is more than one builder that " .
+                        "specifies '$distribution' as alias. " .
+                        "That's not correct! One of them " .
+                        "should specify it as bin_nmu_for";
+            }
+            $distro = $builder_cfg{distribution};
+        }
+    }
+    return $distro;
+}
+
 1;
 
 __END__
@@ -251,6 +280,7 @@ Arepa::BuilderFarm - Arepa builder farm access class
  my %config = $repo->get_builder_config($builder_name);
  my $module_name = $repo->builder_type_module($type);
  my $module_name = $repo->builder_module($builder_name);
+ my $builder     = $repo->builder($builder_name);
 
  $repo->init_builders;
  $repo->init_builder($builder_name);
@@ -314,6 +344,10 @@ C<$type>.
 Returns the module name implementing the features for the given
 C<$builder_name>.
 
+=item builder($builder_name)
+
+Returns the builder object identified by C<$builder_name>.
+
 =item init_builders
 
 Initialises all the builders. It should be called once per machine boot (e.g.
@@ -375,6 +409,14 @@ Registers the source package with the given C<%source_package_attrs>. This
 method is seldom used, as you would normally add the source package to the
 repository first (using C<Arepa::Repository>), which automatically registers
 the source package.
+
+=item canonical_distribution($arch, $distro)
+
+Calculates the canonical distribution, ie. the distribution as registered by
+one of the Arepa builders, given an architecture and distribution from a
+changes file or similar. It's needed for the reprepro call.  If reprepro
+accepted "reprepro includesrc 'funnydistro' ...", having 'funnydistro' in the
+AlsoAcceptFor list, this wouldn't be necessary.
 
 =back
 

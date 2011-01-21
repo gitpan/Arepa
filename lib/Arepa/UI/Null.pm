@@ -1,6 +1,10 @@
 package Arepa::UI::Null;
 
-sub print_info {
+sub print_title {
+    return;
+}
+
+sub print {
     return;
 }
 

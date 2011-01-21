@@ -7,6 +7,9 @@ use Test::Class;
 use Test::More;
 use Cwd;
 use File::Path;
+use File::Copy;
+use File::Basename;
+use File::Spec;
 use HTML::TreeBuilder;
 
 use Arepa::Config;
@@ -57,6 +60,25 @@ sub setup : Test(setup) {
     
     # Make sure the upload queue exists
     mkpath($self->{config}->get_key('upload_queue:path'));
+
+    # Make sure the repository itself exists. If we had to create it, copy the
+    # conf/distributions configuration file
+    my $repo_path = $self->{config}->get_key('repository:path');
+    my $number_dirs_created = mkpath(File::Spec->catfile($repo_path, "conf"));
+    if ($number_dirs_created) {
+        my $conf_base_dir = dirname($self->{config_path});
+        copy(File::Spec->catfile($conf_base_dir, "distributions"),
+             File::Spec->catfile($repo_path,     "conf"));
+    }
+
+    # Make sure the build log directory exists
+    mkpath($self->{config}->get_key('dir:build_logs'));
+}
+
+sub get {
+    my ($self, $url) = @_;
+
+    $self->{t}->client->get($url, sub { $self->{t}->tx($_[-1]) })->process;
 }
 
 sub login_ok {
@@ -75,6 +97,7 @@ sub login_ok {
 sub incoming_packages {
     my ($self) = @_;
 
+    $self->get('/');
     my $tree = HTML::TreeBuilder->new;
     $tree->parse_content($self->t->tx->res->body);
 
@@ -100,6 +123,50 @@ sub incoming_packages {
         push @r, $pkg_names[$i] . "_" . $pkg_versions[$i];
     }
     return @r;
+}
+
+sub queue_files {
+    my ($self, @files) = @_;
+
+    foreach my $file (@files) {
+        copy($file, $self->config->get_key('upload_queue:path'));
+    }
+}
+
+sub save_snapshot {
+    my ($self) = @_;
+
+    open F, ">/tmp/mojo-arepa-snapshot.html";
+    print F $self->t->tx->res->body;
+    close F;
+}
+
+sub is_package_in_repo {
+    my ($self, $package_spec, $distro, $arch) = @_;
+
+    my ($package_name, $package_revision) = split(/_/, $package_spec);
+
+    my $repo_path = $self->config->get_key('repository:path');
+    my $packages_file_path = File::Spec->catfile($repo_path,
+                                                 'dists',
+                                                 $distro,
+                                                 'main',
+                                                 'binary-' . $arch,
+                                                 'Packages');
+    open F, $packages_file_path;
+    my ($current_pkg, $found) = ("", 0);
+    while (<F>) {
+        if (/^Package: (.+)/) {
+            $current_pkg = $1;
+        } elsif ($current_pkg eq $package_name && /^Version: (.+)/) {
+            if ($package_revision eq $1) {
+                $found = 1;
+            }
+        }
+    }
+    close F;
+
+    is($found, 1, "Package $package_spec should be in the repo");
 }
 
 1;
