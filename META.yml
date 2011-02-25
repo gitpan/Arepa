@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Arepa
-version:            0.85
+version:            0.86
 abstract:           Apt REPository Assistant
 author:
     - Esteban Manchado Velázquez <estebanm@opera.com>
