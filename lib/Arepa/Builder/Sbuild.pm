@@ -60,7 +60,7 @@ sub get_builder_directory {
     my ($self, $builder_name) = @_;
 
     if ($self->builder_exists($builder_name)) {
-        return $self->_get_schroot_conf->{$builder_name}->{location};
+        return $self->_get_schroot_conf->{$builder_name}->{directory};
     }
     else {
         croak "Can't find schroot information for builder '$builder_name'\n";
@@ -148,7 +148,7 @@ sub _compile_package_from_spec {
     }
 
     my $builder_name = $self->name;
-    my $build_params = "--chroot $builder_name --apt-update --nolog -A $extra_opts";
+    my $build_params = "--chroot $builder_name -d unstable --apt-update --nolog -A $extra_opts";
     my $r = $self->_call_sbuild($package_spec,
                                 $build_params,
                                 $opts{output_dir});
@@ -191,14 +191,11 @@ sub do_create {
     my $schroot_content = <<EOCONTENT;
 [$builder_name]
 description=Arepa autobuilder $builder_name
-location=$builder_dir
-priority=3
+directory=$builder_dir
 root-groups=sbuild
 # groups=sbuild-security
 groups=sbuild
 #aliases=testing
-#run-setup-scripts=false
-#run-exec-scripts=false
 #personality=linux32
 EOCONTENT
     $self->ui_module->print_title("Creating schroot file ($schroot_file)");
