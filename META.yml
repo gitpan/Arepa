@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Arepa
-version:            0.89
+version:            0.9
 abstract:           Apt REPository Assistant
 author:
     - Esteban Manchado Velázquez <estebanm@opera.com>
@@ -15,6 +15,7 @@ requires:
     DBD::SQLite:          0
     File::chmod:          0
     HTML::Tree:           0
+    Migraine:             0.51
     Mojolicious:          0
     MojoX::Session:       0
     Parse::Debian::PackageDesc:  0

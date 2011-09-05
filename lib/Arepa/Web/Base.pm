@@ -7,9 +7,9 @@ use base 'Mojolicious::Controller';
 
 use Arepa::Config;
 
-my $DEFAULT_CONFIG_PATH = '/etc/arepa/config.yml';
+use constant DEFAULT_CONFIG_PATH => '/etc/arepa/config.yml';
 our $config      = undef;
-our $config_path = $ENV{AREPA_CONFIG} || $DEFAULT_CONFIG_PATH;
+our $config_path = $ENV{AREPA_CONFIG} || DEFAULT_CONFIG_PATH;
 
 if (-r $config_path) {
     $config = Arepa::Config->new($config_path);
@@ -34,13 +34,29 @@ sub _error_list {
     @{$self->{error_list} || []};
 }
 
-sub vars {
-    my ($self, @args) = @_;
+sub _only_if_admin {
+    my ($self, $f) = @_;
 
+    if ($self->stash('is_user_admin')) {
+        $f->();
+    }
+    else {
+        $self->vars(errors =>
+                    [{error => "You need to be an admin to do this!"}]);
+        $self->render('error');
+    }
+}
+
+sub vars {
+    my ($self, %args) = @_;
+
+    my $auth_key = 'web_ui:authentication:type';
+    my $external_auth = ($self->config->key_exists($auth_key) &&
+                         $self->config->get_key($auth_key) eq 'external');
     $self->stash(
-        base_url     => $self->config->get_key('web_ui:base_url'),
-        is_synced    => undef,
-        @args);
+        base_url         => $self->config->get_key('web_ui:base_url'),
+        external_auth    => $external_auth,
+        %args);
 }
 
 sub show_view {
